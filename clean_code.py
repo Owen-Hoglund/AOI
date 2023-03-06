@@ -1,79 +1,121 @@
 from matplotlib import pyplot as plt
 from os.path import isfile, join
 from PIL import ImageChops
+from utility import *
 from os import listdir
 import imutils as imutils
 import numpy as np
 import time
 import cv2
+import re
 
-mypath="c:\AOI\\Files"
-onlyfiles = [ f for f in listdir(mypath) if isfile(join(mypath,f)) ]
+global mypath, onlyfiles, original_image # files
+global drag, drag_start, drag_end, save_drag_end, save_drag_start # rectangle drawing
+global RED, BLUE, GREEN # color components
 
-drag = False  # TODO CONFIG
-drag_start = (0,0) # TODO CONFIG
-drag_end = (0,0) # TODO CONFIG
-save_drag_start = (0,0) # TODO CONFIG
-save_drag_end = (0,0) # TODO CONFIG
-RED=(0,0,255) # TODO CONFIG
-BLUE=(255,0,0) # TODO CONFIG
-GREEN=(0,255,0) # TODO CONFIG
+# TODO component dimension extraction function -> all in one, no more indexing. 
+# TODO Something weird going on with the paths, 
+	# " c:\AOI\Files/407-86.jpg " 
+	# Why different slashes? I will clean this up.
+	# If we dont access the files directly through a directory library (we probably should)
+	# We should at least make it consistent and language agnostic
 
-patterns = [] # this is used only once, seems important # TODO CONFIG
-regions = [] # used  # TODO CONFIG
-show_regions = False  # TODO CONFIG
-show_mask = True # TODO CONFIG
-#show_mask = False # TODO CONFIG
-black = 0xFE  # TODO CONFIG
+#TODO I think if we are already storing the metadata for the components in the file name
+#  we should consider packaging the dimensions also so that we dont have to open the file multiple times to get the dimensions
+# Optionally, we could also change the getdimensions function to take a dense array, which is how cv2 reads its files already.
+# that way we can opent the image once when we are about to use it and then get all the info we need immediately. Just a thought
 
-# teach_components = True # TODO CONFIG
-teach_components = False # TODO CONFIG
+# This sets the configurations of the changeable settings. 
+# Need to collect these in one place to make it easier to 
+# edit in the GUI
+def set_configuration():
+    user_config() # Variables we change (use_camera, teach_components, etc)
+    file_config() # Source files #TODO file paths should come from a config or environment file
+    color_config() # Color configuration, stuff that is unlikely to ever change
+    drag_config() # Initialization for the rectangle drag components
+    misc_config() # this initializes variables whose purpose I haven't figured out yet
 
-#use_camera = True  # TODO CONFIG
-use_camera = False # TODO CONFIG
+# These are the things a user, or us for development, will set.
+def user_config():
+	global teach_components, use_camera, align_camera
+	teach_components = False
+	use_camera = False  
+	align_camera = False #TODO implement camera alignment
 
-# TODO implement camera alignment
-align_camera = False  # TODO CONFIG
+# Sets the directory and the files within
+def file_config():
+    global mypath, onlyfiles, original_image
+    mypath="c:\AOI\\Files"
+    onlyfiles = [ f for f in listdir(mypath) if isfile(join(mypath,f)) ]
+    original_image = r"C:\AOI\Files\original image\saved_image.jpg" 
+
+# Sets RGB color values
+def color_config():
+	global RED, GREEN, BLUE
+	RED=(0,0,255)
+	BLUE=(255,0,0)
+	GREEN=(0,255,0)
+
+# Sets variables needed for rectangle drawing
+def drag_config():
+	global drag, drag_start, drag_end, save_drag_start, save_drag_end
+	drag = False
+	drag_start = (0,0)
+	drag_end = (0,0)
+	save_drag_start = (0,0)
+	save_drag_end = (0,0)
+def misc_config():
+	global patterns, regions, show_regions, show_mask
+	patterns = []
+	regions = []
+	show_regions = False
+	show_mask = True
+
 
 def show_webcam():
-	global drag_start, drag_end, img, patterns, regions, show_regions, show_mask, draw, bSave, save_drag_start, save_drag_end
-	zoom = False
-
+	global drag_start, drag_end, img, patterns, regions, show_regions, show_mask, save_drag_start, save_drag_end
 	print('teach_components = ',teach_components)
 	if teach_components == False:
 		pattern_match_All()
 	else:
-		teach()			#call teach()
+		teach()
 
-
+def example():
+    x = 10
 # Manually identify the components by dragging 
 def teach():
-    global drag_start, drag_end, img, patterns, regions, show_regions, show_mask, draw, bSave, save_drag_start, save_drag_end
-    zoom = False
-    cam = cv2.VideoCapture(1, cv2.CAP_DSHOW)  # jmb 2/24/23 much much faster!
-    cam.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
-    cam.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
-    ret_val, img = cam.read()
+	global drag_start, drag_end, img, patterns, regions, show_regions, show_mask, save_drag_start, save_drag_end
 
-    windowname = 'Teach Components'
-    cv2.namedWindow(windowname)
-    cv2.setMouseCallback(windowname, on_mouse, 0)
+	# Fixed / Implemented so that I can teach it new images from the source file. Before it was just a black screen when teach was true
+	if use_camera:
+		cam = cv2.VideoCapture(1, cv2.CAP_DSHOW)  # jmb 2/24/23 much much faster!
+		cam.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
+		cam.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
+		ret_val, img = cam.read() #TODO error handling
+	else:
+		img = cv2.imread(original_image, 1)
+
+	windowname = 'Teach Components'
+	cv2.namedWindow(windowname)
+	cv2.setMouseCallback(windowname, on_mouse, 0)
 
 
-    while True:
-        # Get image from camera
-        ret_val, image = cam.read()
+	while True:
+		# Get image from camera
+		if use_camera:
+			ret_val, image = cam.read() #TODO error handling
+		else:
+			image = cv2.imread(original_image, 1)
+		# Draw last rectangle
+		cv2.rectangle(img=image, pt1=save_drag_start, pt2=save_drag_end, color=BLUE, thickness=2, lineType=8, shift=0)
+		cv2.imshow(windowname, image)
 
-        # Draw last rectangle
-        cv2.rectangle(img=image, pt1=save_drag_start, pt2=save_drag_end, color=BLUE, thickness=2, lineType=8, shift=0)
-        cv2.imshow(windowname, image)
+		# call waitkey for image to display
+		char = chr(cv2.waitKey(1) & 255)
+		if cv2.waitKey(33) == ord('q'):
+			break
 
-        # call waitkey for image to display
-        char = chr(cv2.waitKey(1) & 255)
-        if cv2.waitKey(33) == ord('q'):
-            break
-
-    cv2.destroyAllWindows()
+	cv2.destroyAllWindows()
 
 
 # track mouse buttons and positions for teach routine
@@ -115,7 +157,7 @@ def on_mouse(event, x, y, flags, params):
 # align routine
 def align():
     global drag_start, drag_end, img, patterns, regions, show_regions, show_mask, draw, bSave, save_drag_start, save_drag_end
-    zoom = False
+    
     cam = cv2.VideoCapture(1, cv2.CAP_DSHOW)  # jmb 2/24/23 much much faster!
     cam.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
@@ -210,7 +252,7 @@ def find_alignment_mark():
 		#componentfile[ypos] = 50
 
 		show_mask = True
-		zoom = False
+		
 		show_regions = True
 		if (show_mask):
             # Read original saved image file from when we taught the components
@@ -229,10 +271,10 @@ def find_alignment_mark():
 			height, width = saved_image.shape[0:2]
 
 			#componentposition = GetComponentXYFromFile(componentfile)
-			#componentdimenions = GetComponentDimensionsFromImage(component_image)
+			#componentdimensions = GetComponentDimensionsFromImage(component_image)
    
-			componentdimenions = GetComponentDimensionsFromFile(componentfile)
-			component_height, component_width = componentdimenions[0:2]
+			componentdimensions = GetComponentDimensionsFromFile(componentfile)
+			component_height, component_width = componentdimensions[0:2]
 
 			component_height = 24		#debug just set
 			component_width = 25
@@ -352,6 +394,7 @@ cv2.destroyAllWindows()
 
 # Find all components
 def pattern_match_All():
+	global original_image
     # component position array index
 	xpos = 0
 	ypos = 1
@@ -372,24 +415,27 @@ def pattern_match_All():
 			componentfile = mypath + "/" + i
    
 			print('Name to Process = ', componentfile)
+			
+			# Grabs the saved component image which we will check against the live feed / original image 
 			component_image = cv2.imread(componentfile)
 
+			# The image file saves its own location in its name
 			componentposition =GetComponentXYFromFile(componentfile)
 
 			show_mask = True
-			zoom = False
+			
 			show_regions = True
 			if (show_mask):
-                # Read the original saved image file from when we taught the components
-                # TODO use live image instead
+				# Read the original saved image file from when we taught the components
+				# TODO use live image instead
 				if (use_camera):
 					saved_image = live_img
 				else:
-					savedfile = mypath + '\\original image\\saved_image.jpg'
-					saved_image = cv2.imread(savedfile)
-                    #delay 300 msecs for viewing
-					cv2.waitKey(300)			
+					saved_image = cv2.imread(original_image)
+					#delay 300 msecs for viewing
+					cv2.waitKey(300)
 
+				# these are the positions we pulled from the 
 				x = componentposition[xpos]
 				y = componentposition[ypos]
 
@@ -398,33 +444,33 @@ def pattern_match_All():
 
 
 				componentposition = GetComponentXYFromFile(componentfile)
-				#componentdimenions = GetComponentDimensionsFromImage(component_image)
-				componentdimenions = GetComponentDimensionsFromFile(componentfile)
-				component_height, component_width = componentdimenions[0:2]
+				#componentdimensions = GetComponentDimensionsFromImage(component_image)
+				componentdimensions = GetComponentDimensionsFromFile(componentfile)
+				component_height, component_width = componentdimensions[0:2]
 				print('component_height = ', component_height)
 				print('component_width = ', component_width)
 
-                # TODO change this into a function later on. cropped image func
-				crop_img = saved_image[componentposition[ypos]:componentposition[ypos] + component_height,
-						   componentposition[xpos]:componentposition[xpos] + component_width]
+				crop_img = saved_image[y:(y + component_height), x:(x + component_width)]
 
 				#cv2.imshow("cropped", crop_img)
 				#cv2.waitKey(0)
 				#crop_img = cv2.cvtColor(crop_img, cv2.COLOR_RGB2RGBA)
 
-				ch, cw = crop_img.shape[0:2]
+				croppedheight, croppedwidth = crop_img.shape[0:2]
 
-				print('cropped image height = ', ch)
-				print('cropped image width = ', cw)
+				print('cropped image height = ', croppedheight)
+				print('cropped image width = ', croppedwidth)
 
                 # Compute MSE error TODO functionize
-				err = np.sum((crop_img.astype("float") - component_image.astype("float")) ** 2)
-				err /= float(crop_img.shape[0] * crop_img.shape[1])
-
+				err = mean_squared_error(crop_img, component_image)
+				# err2 = np.sum((crop_img.astype("float") - component_image.astype("float")) ** 2)
+				# err2 /= float(crop_img.shape[0] * crop_img.shape[1])
+				# print("error function working properly: {eq}".format(eq= err == err2))
 
 				print('err = ', err)
 
-				err2 = mae(component_image,crop_img)
+				# Mean Absolute Error, not sure what this is doing here
+				# err2 = mae(component_image,crop_img)
 
                 # Call FindComponent and draw a box on the image where we expect it to be
                 # We can use either a saved image or the live image
@@ -477,13 +523,14 @@ def FindComponent(original_image, component_file,color):
 	print('Find Component component width = ',width)
 
     # TODO rearrange if no effect
+	# TODO Can load direct rather than save as a list and extract
 	componentposition = GetComponentXYFromFile(component_file)
 
 	ComponentXLocation = componentposition[xpos]
 	ComponentYLocation = componentposition[ypos]
  
-	componentdimenions = GetComponentDimensionsFromFile(component_file)
-	component_height, component_width = componentdimenions[0:2]
+	componentdimensions = GetComponentDimensionsFromFile(component_file)
+	component_height, component_width = componentdimensions[0:2]
 	print('component_height = ', component_height)
 	print('component_width = ', component_width)
 
@@ -510,25 +557,12 @@ def FindComponent(original_image, component_file,color):
 	cv2.setWindowProperty(windowname, cv2.WND_PROP_TOPMOST, 1)
 	cv2.waitKey(100)
 
-
-
 # Get component XY and return the array
 def GetComponentXYFromFile(componentfile):
-	positionarray = [0,0]
-	xpos = 0
-	ypos = 1
+	temp = re.findall(r'\d+', componentfile)
+	return list(map(int, temp))
 
-	pre = (componentfile.split('.', 1))[0]
-	loc = pre.replace(mypath, '')
-	loc = loc.replace('\\', '')
-	loc = loc.replace('/', '')
-
-	print('loc= ',loc)
-
-	positionarray[xpos] = int((loc.split('-', -1))[xpos])
-	positionarray[ypos] = int((loc.split('-', -1))[ypos])
-	return positionarray
-
+# TODO Check if this makes any difference between image/file, i suspect it doesn't. I think cv2 represents an image read from a camera the same as it does for file
 def GetComponentDimensionsFromImage(component_image):
 	dimensionarray = [0, 0]
 	height = 0  # array index
@@ -545,89 +579,14 @@ def GetComponentDimensionsFromFile(componentfile):
 	dimensionarray[height],dimensionarray[width] = component_image.shape[0:2]
 	return dimensionarray
 
-# Debugging Code
-def DebugStuff():
-	# load the original input image and display it to our screen
-	maskfile = "c:\\Aoi\\Files\\Mask1.jpg"
-	original_image = cv2.imread(maskfile)
-	cv2.imshow("Original", original_image)
-
-	# height, width = np.array(image).shape
-
-	# a mask is the same size as our image, but has only two pixel
-	# values, 0 and 255 -- pixels with a value of 0 (background) are
-	# ignored in the original image while mask pixels with a value of
-	# 255 (foreground) are allowed to be kept
-
-	mask = np.zeros(original_image.shape[:2], dtype="uint8")
-	# cv2.rectangle(mask, (0, 90), (290, 450), 255, -1)
-
-	# cv2.rectangle(mask, (304, 166), (290,450), 255, -1)
-
-	width = 420
-	height = 325
-	xpos = 304
-	ypos = 166
-	cv2.rectangle(mask, (304, 166), (width, height), 255, -1)
-	# cv2.rectangle(mask, (304, 166), (163, 117), 255, -1)
-	# cv2.rectangle(mask, (304, 166), (117, 163), 255, -1)
-
-	# cv2.rectangle(mask, (117, 163), (304, 166),  255, -1)
-
-	cv2.imshow("Rectangular Mask", mask)
-
-	# apply our mask -- notice how only the person in the image is
-	# cropped out
-	masked = cv2.bitwise_and(original_image, original_image, mask=mask)
-	cv2.imshow("Mask Applied to Image", masked)
-
-	###############################################################
-	#
-	#				Resize
-	#
-	################################################################
-
-	# resized_frame = imutils.resize(original_image, width=320)
-	# resized_image = cv2.cvtColor(resized_frame, cv2.COLOR_RGB2RGBA)
-
-	# cv2.imshow('resize', resized_image)
-
-	##############################################################################
-	#
-	#			JMB - 2/21/2023 THIS WORKS!
-	#
-	#############################################################################
-	component_file = mypath + '//304-166.jpg'
-
-	FindComponent(original_image, component_file,BLUE)
-	cv2.waitKey(0)
-
-	# Draw the rectangle:
-	# Extract the coordinates of the component
-	# This is embedded in the saved file name in this format
-	# ComponentXLocation-ComponentYLocation
-
-	ComponentXLocation = 304
-	ComponentYLocation = 166
-
-	# Step 2: Get the size of the template. This is the same size as the match.
-	# trows, tcols = small_image.shape[:2]
-	ComponentRows = 163
-	ComponentCols = 117
-
-	# Step 3: Draw the rectangle on large_image
-	cv2.rectangle(original_image, (ComponentXLocation, ComponentYLocation),
-				  (ComponentXLocation + ComponentCols, ComponentYLocation + ComponentRows), (0, 0, 255), 2)
-
-	# Display the original image with the rectangle around the match.
-	cv2.imshow('new output', original_image)
-
-	# The image is only displayed if we call this
-	cv2.waitKey(0)
-
+def mean_squared_error(crop_img, component_image):
+	err = np.sum((crop_img.astype("float") - component_image.astype("float")) ** 2)
+	err /= float(crop_img.shape[0] * crop_img.shape[1])
+	return err
 
 
 def main():
+	set_configuration()
 	show_webcam()
 
 if __name__ == '__main__':
